@@ -1,0 +1,32 @@
+# Node.js (frontend)
+node_modules/
+package-lock.json
+
+# Python (backend)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+*.egg-info/
+.DS_Store
+
+# macOS (backend)
+AWSCLIV2.pkg
+
+# Terraform (infra)
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.backup
+
+# Other
+*.log
+*.swp
+*.swo
+.DS_Store
