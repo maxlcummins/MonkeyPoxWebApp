@@ -5,6 +5,8 @@ from app.database import save_pipeline_run, get_pipeline_run_status
 from fastapi.middleware.cors import CORSMiddleware
 import subprocess  # Import subprocess for running Nextflow
 import os
+import boto3
+import json
 
 app = FastAPI()
 
@@ -29,44 +31,45 @@ async def upload_fastq(
 
 def trigger_pipeline(run_id: str, s3_paths: list[str]):
     try:
-        # Create a directory for the run
-        run_dir = f"runs/{run_id}"
-        os.makedirs(run_dir, exist_ok=True)
+        print(f"Starting EC2 launch for run_id: {run_id}")
 
-        # Create a params.json file for Nextflow
-        params_file = os.path.join(run_dir, "params.json")
-        with open(params_file, "w") as f:
-            import json
-            json.dump({"s3_paths": s3_paths}, f)
+        ec2 = boto3.client('ec2')
 
-        # Run Nextflow pipeline
-        subprocess.run(
-            [
-                "nextflow",
-                "run",
-                "/Users/other/webapp-project/pipeline/main.nf",  # Path to your Nextflow script
-                "-params-file",
-                params_file,
-                "-work-dir",
-                os.path.join(run_dir, "work"),
-                "-resume" # Consider using -resume if needed.
-            ],
-            check=True,
-            cwd=run_dir, # Run nextflow in the run directory.
-            capture_output=True,
-            text=True
+        params_json = json.dumps({"s3_paths": s3_paths})
+
+        user_data = f"""#!/bin/bash
+        mkdir /home/ubuntu/runs/{run_id}
+        echo '{params_json}' > /home/ubuntu/runs/{run_id}/params.json
+        nextflow run /path/to/main.nf -params-file /home/ubuntu/runs/{run_id}/params.json -work-dir /home/ubuntu/runs/{run_id}/work
+        aws s3 sync /home/ubuntu/runs/{run_id}/work/results/ s3://your-results-bucket/{run_id}/results/
+        """
+
+        response = ec2.run_instances(
+            LaunchTemplate={'LaunchTemplateId': 'lt-02f0dfa62a554010a'},
+            MinCount=1,
+            MaxCount=1,
+            UserData=user_data
         )
 
-        # Handle output files (store in S3, update database, etc.)
-        # ... (Implement your logic here)
+        print(f"AWS EC2 API Response: {response}") # Added print
+        instance_id = response['Instances'][0]['InstanceId']
+        print(f"EC2 instance launched: {instance_id}")
 
-        save_pipeline_run(run_id, status="completed", results="...")  # Update database
-    except subprocess.CalledProcessError as e:
-        save_pipeline_run(run_id, status="failed", results=str(e.stderr))
     except Exception as e:
-        save_pipeline_run(run_id, status="failed", results=str(e))
+        print(f"Error launching EC2 instance: {e}")
+        # save_pipeline_run(run_id, status="failed", results=str(e)) # commented out
 
-@app.get("/results/{run_id}")
-async def get_results(run_id: str):
-    status = get_pipeline_run_status(run_id)
-    return status
+#@app.get("/results/{run_id}")
+#async def get_results(run_id: str):
+#    status = get_pipeline_run_status(run_id)
+#    return status
+#
+#@app.post("/update_pipeline_status")
+#async def update_pipeline_status(run_data: dict):
+#    run_id = run_data.get("run_id")
+#    status = run_data.get("status")
+#    if run_id and status:
+#        save_pipeline_run(run_id, status=status, results="...") # add results here if needed
+#        return {"message": "Pipeline status updated"}
+#    else:
+#        return {"message": "Invalid request"}, 400
