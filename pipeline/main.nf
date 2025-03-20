@@ -6,7 +6,6 @@ nextflow.enable.dsl = 2
 params.input_dir = "fastq"  // Default input directory
 params.output_dir = "results"  // Default output directory
 params.pattern = "*_{R1,R2}.fastq.gz"  // Default pattern for paired-end FASTQ files
-params.s3_paths = []  // Default empty list for S3 paths
 
 // Print workflow header
 log.info """
@@ -29,12 +28,18 @@ def getRandomLetter(sampleId) {
 // Process to download files from S3
 process downloadFiles {
     output:
-    path "${params.input_dir}/*_{R1,R2}.fastq.gz"
+    path "${params.input_dir}/*.fastq.gz", emit: downloaded_files
 
     script:
     """
+    echo "S3 Paths: ${params.s3_paths}"
     mkdir -p ${params.input_dir}
-    for s3path in "${params.s3_paths.join(' ')}"; do
+    if [ -z "${params.s3_paths}" ]; then
+        s3_paths_list=""
+    else
+        s3_paths_list="${params.s3_paths}"
+    fi
+    for s3path in "\${s3_paths_list}"; do
         filename=\$(basename \$s3path)
         aws s3 cp \$s3path ${params.input_dir}/\$filename
     done
@@ -73,15 +78,25 @@ process combineCSV {
     cat $csv_files > combined_results.csv
     """
 }
+
 // Define the workflow
 workflow {
+    println "S3 Paths in workflow: ${params.s3_paths}"
     // Download files from S3 and store the output
-    downloaded_files = downloadFiles()
+    downloadFiles()
 
-    // Create a channel from paired-end FASTQ files using the downloaded files
-    fastq_pairs = Channel.fromFilePairs(downloaded_files.collect())
-        .ifEmpty { error "Cannot find any files matching the pattern: ${params.pattern}" }
-        .ifEmpty { error "Cannot find any files matching the pattern: ${params.pattern}" }
+    // Wait for the download to complete, then create a channel from paired-end FASTQ files
+    downloadFiles.out.downloaded_files.collect().map { it -> 
+        return file("${params.input_dir}/${params.pattern}")}
+        .flatten()
+        .buffer(size: 2)
+        .map { files -> 
+        def sampleName = files[0].name.replaceAll(/(.*)_R[12]\.fastq\.gz$/, '$1')
+        return tuple(sampleName, files)}
+        .set { fastq_pairs }
+    
+    // Check if fastq_pairs is empty
+    fastq_pairs.ifEmpty { error "Cannot find any files matching the pattern: ${params.pattern}" }
 
     // Generate individual CSV files
     csv_files = generateCSV(fastq_pairs)
