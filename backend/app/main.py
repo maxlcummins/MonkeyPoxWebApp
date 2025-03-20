@@ -3,10 +3,9 @@ from uuid import uuid4
 from app.storage import upload_files_to_s3
 from app.database import save_pipeline_run, get_pipeline_run_status
 from fastapi.middleware.cors import CORSMiddleware
-import subprocess  # Import subprocess for running Nextflow
-import os
 import boto3
 import json
+import base64  # Import base64
 
 app = FastAPI()
 
@@ -35,41 +34,87 @@ def trigger_pipeline(run_id: str, s3_paths: list[str]):
 
         ec2 = boto3.client('ec2')
 
-        params_json = json.dumps({"s3_paths": s3_paths})
+        params_json = json.dumps({"s3_paths": s3_paths, "run_id": run_id})
 
         user_data = f"""#!/bin/bash
-        mkdir /home/ubuntu/runs/{run_id}
-        echo '{params_json}' > /home/ubuntu/runs/{run_id}/params.json
-        nextflow run /path/to/main.nf -params-file /home/ubuntu/runs/{run_id}/params.json -work-dir /home/ubuntu/runs/{run_id}/work
-        aws s3 sync /home/ubuntu/runs/{run_id}/work/results/ s3://your-results-bucket/{run_id}/results/
+        #!/bin/bash
+        sudo -i
+        set -e
+        set -x
+
+        date
+        echo "Updating package lists..."
+        sudo yum update -y
+        date
+
+        echo "Installing Java..."
+        sudo yum install -y java-11-amazon-corretto-headless
+        date
+
+        echo "Installing Nextflow..."
+        curl -fsSL get.nextflow.io | bash
+        sudo mv nextflow /usr/local/bin/
+        date
+
+        echo "Installing git..."
+        sudo yum install -y git
+        date
+
+        echo "Installing jq..."
+        sudo yum install -y jq
+        date
+
+        echo "Cloning nextflow repo..."
+        mkdir -p /home/ec2-user/MonkeyPoxWebApp/
+        git clone https://github.com/maxlcummins/MonkeyPoxWebApp /home/ec2-user/MonkeyPoxWebApp/
+        date
+
+        echo "Creating run directory..."
+        sudo mkdir -p /home/ec2-user/runs/ #make the runs directory.
+        date
+
+        echo "Creating params.json..."
+        echo '{params_json}' > /home/ec2-user/runs/params.json
+        date
+
+        echo "Extracting run_id from params.json..."
+        run_id=$(jq -r '.run_id' /home/ec2-user/runs/params.json) # Correct jq command.
+        date
+        echo "run_id: $run_id"
+
+        echo "Creating run_id directory..."
+        sudo mkdir -p /home/ec2-user/runs/$run_id #make the run_id directory.
+        date
+
+        echo "Changing directory to run directory..." #Change to run directory.
+        cd /home/ec2-user/runs/$run_id
+        date
+
+        echo "Running nextflow..."
+        nextflow run /home/ec2-user/MonkeyPoxWebApp/pipeline/main.nf -params-file ../params.json -work-dir work #Run Nextflow in run directory.
+        date
+
+        echo "Uploading results..."
+        aws s3 sync /home/ec2-user/runs/$run_id/work/results/ s3://mpoxoutput/$run_id/results/
+        date
+
+        echo "User data script complete."
         """
 
+        print(f"User Data length: {len(user_data)}") #Added length print
+        print(f"First 100 characters: {user_data[:100]}") #Added 100 char print
+        encoded_user_data = base64.b64encode(user_data.encode('utf-8')).decode('utf-8') #Base64 encode.
+
         response = ec2.run_instances(
-            LaunchTemplate={'LaunchTemplateId': 'lt-02f0dfa62a554010a'},
+            LaunchTemplate={'LaunchTemplateId': 'lt-05c9e523b50df738d'},
             MinCount=1,
             MaxCount=1,
-            UserData=user_data
+            UserData=encoded_user_data #send encoded data
         )
 
-        print(f"AWS EC2 API Response: {response}") # Added print
+        print(f"AWS EC2 API Response: {response}")
         instance_id = response['Instances'][0]['InstanceId']
         print(f"EC2 instance launched: {instance_id}")
 
     except Exception as e:
         print(f"Error launching EC2 instance: {e}")
-        # save_pipeline_run(run_id, status="failed", results=str(e)) # commented out
-
-#@app.get("/results/{run_id}")
-#async def get_results(run_id: str):
-#    status = get_pipeline_run_status(run_id)
-#    return status
-#
-#@app.post("/update_pipeline_status")
-#async def update_pipeline_status(run_data: dict):
-#    run_id = run_data.get("run_id")
-#    status = run_data.get("status")
-#    if run_id and status:
-#        save_pipeline_run(run_id, status=status, results="...") # add results here if needed
-#        return {"message": "Pipeline status updated"}
-#    else:
-#        return {"message": "Invalid request"}, 400
