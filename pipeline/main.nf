@@ -34,12 +34,8 @@ process downloadFiles {
     """
     echo "S3 Paths: ${params.s3_paths}"
     mkdir -p ${params.input_dir}
-    if [ -z "${params.s3_paths}" ]; then
-        s3_paths_list=""
-    else
-        s3_paths_list="${params.s3_paths}"
-    fi
-    for s3path in "\${s3_paths_list}"; do
+    s3_paths_list="${params.s3_paths}"
+    for s3path in \$s3_paths_list; do
         filename=\$(basename \$s3path)
         aws s3 cp \$s3path ${params.input_dir}/\$filename
     done
