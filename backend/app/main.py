@@ -100,7 +100,7 @@ def trigger_pipeline(run_id: str, s3_paths: list[str]):
         date
 
         echo "Running nextflow..."
-        nextflow run /home/ec2-user/MonkeyPoxWebApp/pipeline/main.nf -params-file ../params.json -work-dir work
+        nextflow run /home/ec2-user/MonkeyPoxWebApp/pipeline/main.nf -input_dir /home/ec2-user/runs/$run_id -work-dir work
         date
 
         echo "Uploading results..."
