@@ -6,6 +6,7 @@ nextflow.enable.dsl = 2
 params.input_dir = "fastq"  // Default input directory
 params.output_dir = "results"  // Default output directory
 params.pattern = "*_{R1,R2}.fastq.gz"  // Default pattern for paired-end FASTQ files
+params.s3_paths = []  // Default empty list for S3 paths
 
 // Print workflow header
 log.info """
@@ -72,17 +73,14 @@ process combineCSV {
     cat $csv_files > combined_results.csv
     """
 }
-
 // Define the workflow
 workflow {
-    // Download files from S3
-    downloadFiles() // Explicitly call the downloadFiles process
+    // Download files from S3 and store the output
+    downloaded_files = downloadFiles()
 
-    // Create a channel from paired-end FASTQ files
-    fastq_files = downloadFiles().out.collect()
-
-    // Create a channel from paired-end FASTQ files
-    fastq_pairs = Channel.fromFilePairs(fastq_files)
+    // Create a channel from paired-end FASTQ files using the downloaded files
+    fastq_pairs = Channel.fromFilePairs(downloaded_files.collect())
+        .ifEmpty { error "Cannot find any files matching the pattern: ${params.pattern}" }
         .ifEmpty { error "Cannot find any files matching the pattern: ${params.pattern}" }
 
     // Generate individual CSV files
