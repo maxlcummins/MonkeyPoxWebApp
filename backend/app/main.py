@@ -37,7 +37,6 @@ def trigger_pipeline(run_id: str, s3_paths: list[str]):
         params_json = json.dumps({"s3_paths": s3_paths, "run_id": run_id})
 
         user_data = f"""#!/bin/bash
-        #!/bin/bash
         sudo -i
         set -e
         set -x
@@ -45,6 +44,37 @@ def trigger_pipeline(run_id: str, s3_paths: list[str]):
         date
         echo "Updating package lists..."
         sudo yum update -y
+        date
+
+        echo "Installing AWS CLI..."
+        sudo yum install -y aws-cli
+        date
+
+        echo "Creating run directory..."
+        sudo mkdir -p /home/ec2-user/runs/
+        date
+
+        echo "Creating params.json..."
+        echo '{params_json}' > /home/ec2-user/runs/params.json
+        date
+
+        echo "Extracting run_id from params.json..."
+        run_id=$(jq -r '.run_id' /home/ec2-user/runs/params.json)
+        date
+        echo "run_id: $run_id"
+
+        echo "Creating run_id directory..."
+        sudo mkdir -p /home/ec2-user/runs/$run_id
+        date
+
+        echo "Changing directory to run directory..."
+        cd /home/ec2-user/runs/$run_id
+        date
+
+        echo "Copying data from S3..."
+        for s3_path in $(jq -r '.s3_paths[]' /home/ec2-user/runs/params.json); do
+        aws s3 cp "$s3_path" .
+        done
         date
 
         echo "Installing Java..."
@@ -69,29 +99,8 @@ def trigger_pipeline(run_id: str, s3_paths: list[str]):
         git clone https://github.com/maxlcummins/MonkeyPoxWebApp /home/ec2-user/MonkeyPoxWebApp/
         date
 
-        echo "Creating run directory..."
-        sudo mkdir -p /home/ec2-user/runs/ #make the runs directory.
-        date
-
-        echo "Creating params.json..."
-        echo '{params_json}' > /home/ec2-user/runs/params.json
-        date
-
-        echo "Extracting run_id from params.json..."
-        run_id=$(jq -r '.run_id' /home/ec2-user/runs/params.json) # Correct jq command.
-        date
-        echo "run_id: $run_id"
-
-        echo "Creating run_id directory..."
-        sudo mkdir -p /home/ec2-user/runs/$run_id #make the run_id directory.
-        date
-
-        echo "Changing directory to run directory..." #Change to run directory.
-        cd /home/ec2-user/runs/$run_id
-        date
-
         echo "Running nextflow..."
-        nextflow run /home/ec2-user/MonkeyPoxWebApp/pipeline/main.nf -params-file ../params.json -work-dir work #Run Nextflow in run directory.
+        nextflow run /home/ec2-user/MonkeyPoxWebApp/pipeline/main.nf -params-file ../params.json -work-dir work
         date
 
         echo "Uploading results..."
